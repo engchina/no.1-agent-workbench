@@ -64,6 +64,21 @@ sudo tail -f /var/log/no1-agent-workbench-bootstrap.log
 sudo /usr/local/sbin/no1-agent-workbench/verify_workbench.sh
 ```
 
+## Troubleshooting
+
+`codex --version` で `Missing optional dependency @openai/codex-linux-x64` が出る場合は、npm が optional dependency を省略しています。`opc` として optional dependency を含めて再インストールしてください。
+
+```bash
+sudo -u opc bash -lc '
+set -euo pipefail
+npm config set prefix "$HOME/.npm-global"
+npm config delete omit >/dev/null 2>&1 || true
+npm config set include optional
+npm install -g --include=optional @openai/codex@latest @openai/codex-linux-x64@latest
+"$HOME/.npm-global/bin/codex" --version
+'
+```
+
 ## セキュリティ注意
 
 この stack は instance principal を使わず、Terraform が ADB wallet を生成して縮小 ZIP を cloud-init に注入します。そのため Resource Manager の state/job history には wallet や一部 secret が残ります。検証・PoC 用途を想定し、production で長期運用する場合は Object Storage PAR や別の secret 配布方式を検討してください。
