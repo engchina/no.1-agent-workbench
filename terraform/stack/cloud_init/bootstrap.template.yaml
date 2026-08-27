@@ -1,0 +1,109 @@
+#cloud-config
+output: {all: "| tee -a /var/log/no1-agent-workbench-cloud-init.log"}
+package_update: false
+package_upgrade: false
+
+bootcmd:
+  - mkdir -p /etc/no1-agent-workbench /var/lib/no1-agent-workbench /usr/local/sbin/no1-agent-workbench
+  - chmod 0700 /etc/no1-agent-workbench /var/lib/no1-agent-workbench
+
+write_files:
+  - path: /etc/no1-agent-workbench/config.json
+    owner: root:root
+    permissions: "0600"
+    encoding: b64
+    content: ${bootstrap_config}
+
+  - path: /etc/no1-agent-workbench/wallet.zip
+    owner: root:root
+    permissions: "0600"
+    encoding: b64
+    content: ${wallet_content}
+
+  - path: /usr/local/sbin/no1-agent-workbench/common.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${common_script}
+
+  - path: /usr/local/sbin/no1-agent-workbench/bootstrap.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${bootstrap_script}
+
+  - path: /usr/local/sbin/no1-agent-workbench/grow_boot_volume.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${grow_boot_volume_script}
+
+  - path: /usr/local/sbin/no1-agent-workbench/install_nodejs.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${install_nodejs_script}
+
+  - path: /usr/local/sbin/no1-agent-workbench/install_uv.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${install_uv_script}
+
+  - path: /usr/local/sbin/no1-agent-workbench/install_sqlcl.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${install_sqlcl_script}
+
+  - path: /usr/local/sbin/no1-agent-workbench/install_codex.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${install_codex_script}
+
+  - path: /usr/local/sbin/no1-agent-workbench/setup_wallet.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${setup_wallet_script}
+
+  - path: /usr/local/sbin/no1-agent-workbench/setup_codex_mcp.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${setup_codex_mcp_script}
+
+  - path: /usr/local/sbin/no1-agent-workbench/verify_workbench.sh
+    owner: root:root
+    permissions: "0700"
+    encoding: gzip+base64
+    content: ${verify_workbench_script}
+
+  - path: /etc/systemd/system/no1-agent-workbench-bootstrap.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=no.1-agent-workbench bootstrap
+      Wants=network-online.target
+      After=network-online.target
+      ConditionPathExists=!/var/lib/no1-agent-workbench/bootstrap-complete
+      StartLimitIntervalSec=0
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/no1-agent-workbench/bootstrap.sh
+      StandardOutput=journal
+      StandardError=journal
+      TimeoutStartSec=infinity
+      Restart=on-failure
+      RestartSec=60
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl enable no1-agent-workbench-bootstrap.service
+  - systemctl start --no-block no1-agent-workbench-bootstrap.service

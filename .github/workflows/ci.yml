@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Terraform stack validation
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive terraform/stack
+
+      - name: Terraform init
+        run: terraform -chdir=terraform/stack init -backend=false
+
+      - name: Terraform validate
+        run: terraform -chdir=terraform/stack validate
+
+      - name: Shell syntax
+        run: find terraform/stack -name '*.sh' -exec bash -n {} \;
+
+      - name: Shellcheck
+        run: shellcheck -S error terraform/stack/extract_wallet.sh terraform/stack/scripts/*.sh
+
+      - name: Python tests
+        run: python3 -m unittest discover -s tests
+
+      - name: Build Resource Manager package
+        run: python3 scripts/package_terraform_stack.py

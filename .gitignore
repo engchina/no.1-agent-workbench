@@ -1,5 +1,7 @@
 # Local .terraform directories
 .terraform/
+**/.terraform/
+.terraform.lock.hcl
 
 # .tfstate files
 *.tfstate
@@ -42,3 +44,16 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+
+# OCI Resource Manager package
+dist/
+
+# Wallet files generated while Terraform external data sources run
+terraform/stack/wallet_full.zip
+terraform/stack/wallet_small.zip
+terraform/stack/wallet_extracted/
+terraform/stack/wallet_selected/
+
+# Python/local test cache
+__pycache__/
+.pytest_cache/

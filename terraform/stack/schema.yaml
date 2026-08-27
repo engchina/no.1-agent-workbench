@@ -1,0 +1,577 @@
+title: "no.1-agent-workbench を Oracle Cloud Infrastructure にデプロイ"
+stackDescription: "Oracle Linux 9 の Compute と Autonomous Database を作成し、Node.js 24、Codex CLI、uv、SQLcl MCP Server、ADB wallet を初回起動で構成する agent workbench です。"
+schemaVersion: 1.1.0
+version: "0.1.0"
+locale: "ja"
+
+variableGroups:
+  - title: "非表示設定"
+    visible: false
+    variables:
+      - region
+      - adb_compute_model
+      - adb_use_private_subnet
+      - wallet_content_max_base64_length
+
+  - title: "配置先"
+    visible: true
+    variables:
+      - compartment_ocid
+      - availability_domain
+      - vcn_id
+      - subnet_id
+      - ssh_authorized_keys
+      - assign_public_ip
+
+  - title: "Compute"
+    visible: true
+    variables:
+      - instance_display_name
+      - instance_shape
+      - instance_flex_shape_ocpus
+      - instance_flex_shape_memory
+      - instance_boot_volume_size
+      - instance_boot_volume_vpus
+      - instance_image_ocid
+
+  - title: "Agent tools"
+    visible: true
+    variables:
+      - nodejs_release_base_url
+      - codex_cli_version
+      - sqlcl_download_url
+      - uv_version
+      - openai_api_key
+
+  - title: "Autonomous Database"
+    visible: true
+    variables:
+      - adb_deployment_mode
+
+  - title: "既存 Autonomous Database"
+    visible:
+      eq:
+        - adb_deployment_mode
+        - "既存の Autonomous AI Database を選択"
+    variables:
+      - existing_adb_ocid
+      - existing_oracle_user
+      - existing_oracle_password
+      - existing_oracle_dsn
+      - existing_oracle_wallet_password
+
+  - title: "新規 Autonomous Database"
+    visible:
+      eq:
+        - adb_deployment_mode
+        - "新規 Autonomous AI Database の作成"
+    variables:
+      - adb_display_name
+      - adb_name
+      - adb_password
+      - adb_workload
+      - adb_db_version
+      - adb_compute_count
+      - adb_is_auto_scaling_enabled
+      - adb_data_storage_size_in_tbs
+      - adb_is_auto_scaling_for_storage_enabled
+      - adb_is_elastic_pool_enabled
+      - adb_resource_pool_size
+      - adb_resource_pool_storage_size_in_tbs
+      - license_model
+      - adb_backup_retention_period_in_days
+      - adb_network_access_type
+      - adb_subnet_id
+      - adb_acl_notation_type
+      - adb_acl_vcn_id
+      - adb_acl_subnet_id
+      - adb_acl_cidr_blocks
+      - adb_is_mtls_connection_required
+
+variables:
+  region:
+    type: enum
+    required: true
+    visible: false
+    title: "リージョン"
+    description: "内部互換用です。実際の provider region は subnet_id から推定します。"
+    enum:
+      - "ap-tokyo-1"
+      - "ap-osaka-1"
+    default: "ap-tokyo-1"
+
+  compartment_ocid:
+    type: oci:identity:compartment:id
+    required: true
+    visible: true
+    title: "作成先 compartment"
+
+  availability_domain:
+    type: oci:identity:availabilitydomain:name
+    required: true
+    visible: true
+    title: "Availability domain"
+    dependsOn:
+      region: ${region}
+      compartmentId: ${compartment_ocid}
+
+  vcn_id:
+    type: oci:core:vcn:id
+    required: true
+    visible: true
+    title: "VCN"
+    description: "Compute と ADB ACL で使用する既存 VCN です。"
+    dependsOn:
+      compartmentId: ${compartment_ocid}
+
+  subnet_id:
+    type: oci:core:subnet:id
+    required: true
+    visible: true
+    title: "Compute subnet"
+    description: "Compute instance を配置する subnet です。東京または大阪の subnet を選択してください。"
+    dependsOn:
+      compartmentId: ${compartment_ocid}
+      vcnId: ${vcn_id}
+
+  ssh_authorized_keys:
+    type: oci:core:ssh:publickey
+    required: true
+    visible: true
+    title: "SSH public key"
+    description: "opc ユーザーへ登録する SSH 公開鍵です。"
+
+  assign_public_ip:
+    type: boolean
+    required: true
+    visible: true
+    title: "Public IP を割り当てる"
+    description: "既定は false です。private subnet では false のままにしてください。"
+    default: false
+
+  instance_display_name:
+    type: string
+    required: true
+    visible: true
+    title: "Instance display name"
+    default: "agent-workbench"
+
+  instance_shape:
+    type: enum
+    required: true
+    visible: true
+    title: "Compute shape"
+    enum:
+      - "VM.Standard.E5.Flex"
+      - "VM.Standard.E4.Flex"
+    default: "VM.Standard.E5.Flex"
+
+  instance_flex_shape_ocpus:
+    type: number
+    required: true
+    visible: true
+    title: "OCPU"
+    minimum: 1
+    default: 2
+
+  instance_flex_shape_memory:
+    type: number
+    required: true
+    visible: true
+    title: "Memory (GB)"
+    description: "既定は 24GB です。"
+    minimum: 24
+    default: 24
+
+  instance_boot_volume_size:
+    type: number
+    required: true
+    visible: true
+    title: "Boot volume size (GB)"
+    description: "初回起動で root filesystem を拡張します。"
+    minimum: 50
+    maximum: 32768
+    default: 100
+
+  instance_boot_volume_vpus:
+    type: enum
+    required: true
+    visible: true
+    title: "Boot volume VPUs/GB"
+    enum:
+      - 10
+      - 20
+      - 30
+      - 40
+      - 50
+      - 60
+      - 70
+      - 80
+      - 90
+      - 100
+      - 110
+      - 120
+    default: 10
+
+  instance_image_ocid:
+    type: string
+    required: false
+    visible: true
+    title: "Oracle Linux 9 image OCID override"
+    description: "空欄の場合は対象 shape/region の最新 Oracle Linux 9 platform image を自動選択します。"
+    default: ""
+
+  nodejs_release_base_url:
+    type: string
+    required: true
+    visible: true
+    title: "Node.js 24 release URL"
+    description: "SHASUMS256.txt で検証する Node.js 公式 release directory です。"
+    default: "https://nodejs.org/download/release/latest-v24.x"
+
+  codex_cli_version:
+    type: string
+    required: true
+    visible: true
+    title: "Codex CLI version"
+    description: "npm install -g @openai/codex@version で使用します。既定は latest です。"
+    default: "latest"
+
+  sqlcl_download_url:
+    type: string
+    required: true
+    visible: true
+    title: "SQLcl download URL"
+    default: "https://download.oracle.com/otn_software/java/sqldeveloper/sqlcl-latest.zip"
+
+  uv_version:
+    type: string
+    required: false
+    visible: true
+    title: "uv version"
+    description: "空欄の場合は公式 installer の既定値を使用します。"
+    default: ""
+
+  openai_api_key:
+    type: password
+    required: false
+    visible: true
+    title: "OpenAI API key (optional)"
+    description: "指定した場合だけ opc として codex login --with-api-key を実行します。未指定の場合は SSH 後に手動 login してください。"
+    confirmation: false
+
+  adb_deployment_mode:
+    type: enum
+    required: true
+    visible: true
+    title: "ADB deployment mode"
+    enum:
+      - "新規 Autonomous AI Database の作成"
+      - "既存の Autonomous AI Database を選択"
+    default: "新規 Autonomous AI Database の作成"
+
+  existing_adb_ocid:
+    type: oci:database:autonomousdatabase:id
+    required: false
+    visible: true
+    title: "既存 Autonomous Database"
+    dependsOn:
+      compartmentId: ${compartment_ocid}
+
+  existing_oracle_user:
+    type: string
+    required: false
+    visible: true
+    title: "既存 DB user"
+    default: "ADMIN"
+
+  existing_oracle_password:
+    type: password
+    required: false
+    visible: true
+    title: "既存 DB password"
+    description: "SQLcl saved connection のため /, @, ダブルクォート、改行は使用できません。"
+    confirmation: true
+    pattern: '^[^/@\"\r\n]{0,256}$'
+
+  existing_oracle_dsn:
+    type: string
+    required: false
+    visible: true
+    title: "既存 DB DSN"
+    description: "空欄の場合は db_name と workload から自動生成します。"
+    default: ""
+
+  existing_oracle_wallet_password:
+    type: password
+    required: false
+    visible: true
+    title: "既存 ADB wallet password"
+    description: "空欄の場合は existing_oracle_password を使用します。"
+    confirmation: true
+    pattern: '^[^/@\"\r\n]{0,256}$'
+
+  adb_display_name:
+    type: string
+    required: false
+    visible: true
+    title: "ADB display name"
+    default: ""
+
+  adb_name:
+    type: string
+    required: true
+    visible: true
+    title: "ADB database name"
+    description: "英字で始まる 14 文字以内の英数字です。既定 DSN は agentadb_medium です。"
+    pattern: '^[A-Za-z][A-Za-z0-9]{0,13}$'
+    default: "AGENTADB"
+
+  adb_password:
+    type: password
+    required: true
+    visible: true
+    title: "ADB ADMIN password"
+    description: "12-30 文字、大文字・小文字・数字を含めます。SQLcl saved connection のため /, @, ダブルクォート、改行は使用できません。"
+    confirmation: true
+    pattern: '^[^/@\"\r\n]{12,30}$'
+
+  adb_workload:
+    type: enum
+    required: true
+    visible: true
+    title: "ADB workload"
+    enum:
+      - "LH"
+      - "OLTP"
+      - "DW"
+      - "AJD"
+      - "APEX"
+    default: "LH"
+
+  adb_db_version:
+    type: enum
+    required: true
+    visible: true
+    title: "ADB database version"
+    enum:
+      - "26ai"
+      - "23ai"
+      - "19c"
+    default: "26ai"
+
+  adb_compute_model:
+    type: enum
+    required: true
+    visible: false
+    title: "ADB compute model"
+    enum:
+      - "ECPU"
+      - "OCPU"
+    default: "ECPU"
+
+  adb_compute_count:
+    type: number
+    required: true
+    visible: true
+    title: "ADB compute count"
+    minimum: 1
+    default: 2
+
+  adb_is_auto_scaling_enabled:
+    type: boolean
+    required: true
+    visible: true
+    title: "ADB compute auto scaling"
+    default: false
+
+  adb_data_storage_size_in_tbs:
+    type: number
+    required: true
+    visible: true
+    title: "ADB storage (TB)"
+    minimum: 1
+    default: 1
+
+  adb_is_auto_scaling_for_storage_enabled:
+    type: boolean
+    required: true
+    visible: true
+    title: "ADB storage auto scaling"
+    default: false
+
+  adb_is_elastic_pool_enabled:
+    type: boolean
+    required: true
+    visible: true
+    title: "ADB elastic pool"
+    default: false
+
+  adb_resource_pool_size:
+    type: number
+    required: true
+    visible: true
+    title: "ADB elastic pool size"
+    minimum: 0
+    default: 0
+
+  adb_resource_pool_storage_size_in_tbs:
+    type: number
+    required: true
+    visible: true
+    title: "ADB elastic pool storage (TB)"
+    minimum: 0
+    default: 0
+
+  license_model:
+    type: enum
+    required: true
+    visible: true
+    title: "ADB license model"
+    enum:
+      - "LICENSE_INCLUDED"
+      - "BRING_YOUR_OWN_LICENSE"
+    default: "LICENSE_INCLUDED"
+
+  adb_backup_retention_period_in_days:
+    type: number
+    required: true
+    visible: true
+    title: "ADB backup retention days"
+    minimum: 1
+    default: 1
+
+  adb_network_access_type:
+    type: enum
+    required: true
+    visible: true
+    title: "ADB network access"
+    enum:
+      - "SECURE_ACCESS_FROM_ALLOWED_IPS_AND_VCNS"
+      - "PUBLIC_ENDPOINT"
+      - "PRIVATE_ENDPOINT_ONLY"
+    default: "SECURE_ACCESS_FROM_ALLOWED_IPS_AND_VCNS"
+
+  adb_use_private_subnet:
+    type: boolean
+    required: true
+    visible: false
+    title: "Private endpoint compatibility switch"
+    default: false
+
+  adb_subnet_id:
+    type: oci:core:subnet:id
+    required: false
+    visible: true
+    title: "ADB private endpoint subnet"
+    dependsOn:
+      compartmentId: ${compartment_ocid}
+      vcnId: ${vcn_id}
+
+  adb_acl_notation_type:
+    type: enum
+    required: true
+    visible: true
+    title: "ADB ACL notation"
+    enum:
+      - "VCN"
+      - "CIDR_BLOCK"
+    default: "VCN"
+
+  adb_acl_vcn_id:
+    type: oci:core:vcn:id
+    required: false
+    visible: true
+    title: "ADB ACL VCN"
+    description: "空欄の場合は vcn_id を使用します。"
+    dependsOn:
+      compartmentId: ${compartment_ocid}
+
+  adb_acl_subnet_id:
+    type: oci:core:subnet:id
+    required: false
+    visible: true
+    title: "ADB ACL subnet"
+    description: "空欄の場合は subnet_id を使用します。"
+    dependsOn:
+      compartmentId: ${compartment_ocid}
+      vcnId: ${vcn_id}
+
+  adb_acl_cidr_blocks:
+    type: string
+    required: false
+    visible: true
+    title: "ADB ACL CIDR blocks"
+    description: "CIDR_BLOCK を選択した場合に使うカンマ区切りリストです。"
+    default: ""
+
+  adb_is_mtls_connection_required:
+    type: boolean
+    required: true
+    visible: true
+    title: "ADB mTLS required"
+    default: true
+
+  wallet_content_max_base64_length:
+    type: number
+    required: true
+    visible: false
+    title: "Wallet base64 length limit"
+    default: 16000
+
+outputs:
+  selected_region:
+    type: string
+    title: "選択リージョン"
+
+  selected_oracle_linux_image:
+    type: string
+    title: "Oracle Linux 9 image"
+
+  selected_oracle_linux_image_ocid:
+    type: string
+    title: "Oracle Linux 9 image OCID"
+
+  instance_ocid:
+    type: string
+    title: "Compute instance OCID"
+
+  private_ip:
+    type: string
+    title: "Private IP"
+
+  public_ip:
+    type: string
+    title: "Public IP"
+
+  ssh_command:
+    type: string
+    title: "SSH command"
+
+  autonomous_database_ocid:
+    type: string
+    title: "Autonomous Database OCID"
+
+  default_oracle_dsn:
+    type: string
+    title: "Default Oracle DSN"
+
+  workspace_path:
+    type: string
+    title: "Workspace path"
+
+  wallet_dir:
+    type: string
+    title: "Wallet directory"
+
+  codex_mcp_config_path:
+    type: string
+    title: "Codex MCP config"
+
+  bootstrap_log_command:
+    type: string
+    title: "Bootstrap log command"
+
+  verification_command:
+    type: string
+    title: "Verification command"
