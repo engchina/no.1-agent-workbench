@@ -21,7 +21,7 @@ no.1-agent-workbench-terraform-stack.zip
 - Compute default: `VM.Standard.E5.Flex`, `2 OCPU`, `24GB RAM`, `100GB boot volume`
 - ADB default: workload `LH`, database version `26ai`, default DSN `agentadb_medium`
 - Node.js: 公式 `latest-v24.x` tarball + `SHASUMS256.txt` 検証
-- Codex CLI: `opc` の npm prefix `/home/opc/.npm-global` に `@openai/codex@latest` をインストール
+- Codex CLI: `opc` の npm prefix `/home/opc/.npm-global` に、Linux binary tarball が存在する最新安定版の `@openai/codex` をインストール
 - SQLcl: `/opt/sqlcl` に配置し、`/usr/local/bin/sql` から実行
 - MCP: `/home/opc/.codex/config.toml` に SQLcl MCP Server (`sql -mcp`) を登録
 - boot volume: 初回起動の最初に `/usr/libexec/oci-growfs -y` で root filesystem を拡張
@@ -66,16 +66,34 @@ sudo /usr/local/sbin/no1-agent-workbench/verify_workbench.sh
 
 ## Troubleshooting
 
-`codex --version` で `Missing optional dependency @openai/codex-linux-x64` が出る場合は、npm が optional dependency を省略しています。`opc` として optional dependency を含めて再インストールしてください。
+`codex --version` で `Missing optional dependency @openai/codex-linux-x64` が出る場合は、npm が optional dependency を省略しているか、latest tag と Linux binary tarball の公開タイミングがずれています。`opc` として利用可能な直近の安定版を探して再インストールしてください。
 
 ```bash
 sudo -u opc bash -lc '
 set -euo pipefail
+CODEX_VERSION=""
+for v in $(npm view @openai/codex versions --json \
+  | jq -r ".[]" \
+  | grep -E "^[0-9]+\.[0-9]+\.[0-9]+$" \
+  | tail -15 \
+  | tac); do
+  url=$(npm view "@openai/codex@${v}-linux-x64" dist.tarball 2>/dev/null) || continue
+  [ -z "$url" ] && { echo "  $v -> no metadata"; continue; }
+  code=$(curl -sL -o /dev/null -w "%{http_code}" "$url")
+  echo "  $v -> $code"
+  if [ "$code" = "200" ]; then CODEX_VERSION="$v"; break; fi
+done
+[ -n "$CODEX_VERSION" ] || { echo "no usable version found in last 15 releases"; exit 1; }
+
 npm config set prefix "$HOME/.npm-global"
 npm config delete omit >/dev/null 2>&1 || true
 npm config set include optional
-npm install -g --include=optional @openai/codex@latest @openai/codex-linux-x64@latest
+rm -rf "$HOME/.npm-global/lib/node_modules/@openai/codex" "$HOME/.npm-global/bin/codex"
+npm install -g "@openai/codex@${CODEX_VERSION}" --include=optional --no-audit --no-fund
+VENDOR="$HOME/.npm-global/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor"
+[ -d "$VENDOR" ] || { echo "FAILED: vendor dir missing at $VENDOR"; exit 1; }
 "$HOME/.npm-global/bin/codex" --version
+echo ">>> pinned version: ${CODEX_VERSION}"
 '
 ```
 
